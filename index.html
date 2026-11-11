@@ -1007,6 +1007,14 @@ table.bk input.cell.name{font-weight:600;font-size:14px;padding:2px 4px}
 .bkmeta{display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap}
 .bkmeta select.cell,.bkmeta input.cell{width:auto;font-size:12px;padding:2px 4px}
 @media (max-width:1000px){#bkadd{grid-template-columns:1fr 1fr}#bkadd .btn{grid-column:1/-1}}
+#join{position:fixed;inset:0;z-index:6000;background:rgba(17,17,17,.45);display:grid;place-items:center;padding:16px}
+#join form{background:#fff;color:#111;border-radius:10px;padding:22px;max-width:380px;width:100%;display:grid;gap:10px;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+#join h2{font-size:18px;margin:0}
+#join p{margin:0;font-size:13.5px;color:#555}
+#join input{font:inherit;font-size:14px;border:1px solid #111;border-radius:8px;padding:10px 12px}
+#join .err{color:#b00020;font-size:13px;min-height:1em}
+#join .row{display:flex;gap:8px;justify-content:flex-end}
+.whojoin{border:0;background:none;padding:0;font:inherit;font-size:12px;text-decoration:underline;cursor:pointer;color:#111}
 details.more{margin-top:24px}
 details.more summary{cursor:pointer;font-size:13px;font-weight:600;border-bottom:1px solid #111;padding-bottom:6px;list-style:none}
 details.more summary::-webkit-details-marker{display:none}
@@ -1777,7 +1785,8 @@ async function fillNames(){
 }
 async function renderWho(){
   const el=$("#whobar"); if(!el) return;
-  if(!USER||SL.mode!=="db"){ el.textContent=SL.mode==="db"?"":"Saved in this browser only"; return; }
+  if(SL.mode==="sb"){ const t=SB.lastSync?new Date(SB.lastSync).toLocaleTimeString("en-AU",{hour:"numeric",minute:"2-digit",second:"2-digit"}):"connecting…"; el.innerHTML=`Shared trip · ${SB.lastSync?"synced "+t:t} · <button class="whojoin" type="button">Refresh</button>`; el.querySelector(".whojoin").onclick=()=>window.syncNow&&window.syncNow(); return; }
+  if(!USER||SL.mode!=="db"){ if(SL.mode==="db"){ el.textContent=""; return; } el.innerHTML=`Viewing a copy · changes stay in this browser · <button class="whojoin" type="button">Enter trip code</button>`; el.querySelector(".whojoin").onclick=()=>window.showJoin&&window.showJoin(); return; }
   const ids=peopleIds(); const ps=await USER.profiles(ids);
   el.innerHTML=`<span class="avs"></span><span id="whotxt"></span>`;
   const avs=el.querySelector(".avs");
@@ -1790,6 +1799,13 @@ async function renderWho(){
 function saveLocal(){ try{localStorage.setItem("ky_short2",JSON.stringify(SL.items))}catch(e){} }
 function saveItem(it,fields){
   updateCounts();
+  if(SL.mode==="sb"){
+    it.updated=Date.now();
+    const body=JSON.parse(JSON.stringify(it)); let part=body;
+    if(fields&&fields.length){ part={id:it.id,updated:it.updated}; fields.forEach(f=>{ part[f]=body[f]===undefined?null:body[f]; }); }
+    slWrites[it.id]=(slWrites[it.id]||Promise.resolve()).then(()=>SB.rpc("save_trip_item",{p_code:SB.code,p_id:it.id,p_data:part})).then(()=>{ delete slWrites[it.id]; }).catch(()=>flash("Couldn't save — check your connection."));
+    return;
+  }
   if(SL.mode==="db"&&slCol){
     it.updatedBy=ME.id||null; it.updated=Date.now();
     const body=JSON.parse(JSON.stringify(it));
@@ -1806,6 +1822,7 @@ function saveItem(it,fields){
 }
 function removeItem(id){
   SL.items=SL.items.filter(x=>x.id!==id); updateCounts();
+  if(SL.mode==="sb"){ slWrites[id]=(slWrites[id]||Promise.resolve()).then(()=>SB.rpc("delete_trip_item",{p_code:SB.code,p_id:id})).then(()=>{ delete slWrites[id]; }).catch(()=>flash("Couldn't remove — check your connection.")); return; }
   if(SL.mode==="db"&&slCol){ slWrites[id]=(slWrites[id]||Promise.resolve()).then(()=>slCol.doc(id).delete()).catch(()=>{}); }
   else saveLocal();
 }
@@ -1988,7 +2005,7 @@ function renderBook(){
       <div class="af"><label>Cost</label><div class="costin"><select name="cur" class="cell cur">${CURS.map(c=>`<option ${c==="A$"?"selected":""}>${c}</option>`).join("")}</select><input name="cost" class="cell num" type="number" min="0" step="any" inputmode="decimal" placeholder="0"></div></div>
       <button class="btn" type="submit">Add booking</button>
     </form>`:""}
-    <div class="hint muted">Add anything you've booked — flights, car hire, rail passes, tours. Hotels and restaurants also appear here when you set them to <b>Booked</b> in their tabs.${ASSETS?" Attach the confirmation PDF so everyone can open it.":(SL.mode==="db"?"":" Booking PDFs are kept on the shared claude.ai version only.")}</div>
+    <div class="hint muted">Add anything you've booked — flights, car hire, rail passes, tours. Hotels and restaurants also appear here when you set them to <b>Booked</b> in their tabs.${ASSETS?" Attach the confirmation PDF so everyone can open it.":(SL.mode!=="local"?"":" Booking PDFs are kept on the shared claude.ai version only.")}</div>
     <section class="tgroup">${done.length?`<table class="bk"><thead><tr><th>Booking</th><th>Status</th><th>Confirmation #</th><th>Booking PDF</th><th>Cost</th><th></th></tr></thead><tbody>${done.map(bookRow).join("")}</tbody></table>`:`<div class="empty muted">Nothing booked yet.</div>`}</section>`;
   $("#detail").innerHTML=html; fillNames();
 }
@@ -2090,7 +2107,7 @@ function renderTodo(){
       <div class="af"><label>Image <span class="muted">(optional)</span></label><label class="afimg"><input type="file" name="img" accept="image/*" hidden><span id="afimgtxt">Choose photo…</span></label></div>
       <button class="btn" type="submit">Add thing to do</button>
     </form>
-    <div class="hint muted">Everything in your itinerary, grouped by where you're staying. Tap a day to jump to it in the itinerary, or a photo to see it on the map. Add your own ideas above. ${SL.mode==="db"?"Shared with everyone on this trip.":"Saved in this browser only."}</div>`;
+    <div class="hint muted">Everything in your itinerary, grouped by where you're staying. Tap a day to jump to it in the itinerary, or a photo to see it on the map. Add your own ideas above. ${SL.mode!=="local"?"Shared with everyone on this trip.":"Saved in this browser only."}</div>`;
   GROUPS.forEach(g=>{
     const ids=sights.filter(id=>groupOfArea(P[id].a)===g.k).sort((a,b)=>{const da=sightDay(a),db=sightDay(b);return (da<0?99:da)-(db<0?99:db);});
     const mine=own.filter(x=>x.group===g.k);
@@ -2175,6 +2192,57 @@ document.addEventListener("change",e=>{ if(e.target.name==="img"&&e.target.close
 try{ SL.items=JSON.parse(localStorage.getItem("ky_short2")||"null")||(typeof SEED!=="undefined"?JSON.parse(JSON.stringify(SEED)):[]); }catch(e){ SL.items=[]; }
 if(!SL.items.length){ try{ const old=JSON.parse(localStorage.getItem("ky_short")||"[]"); SL.items=old.map(o=>({...blank(o.kind,o.group),...o,cost:null,cur:"¥",img:""})); }catch(e){} }
 updateCounts();
+
+// ---- Shared trip via Supabase (GitHub site) ----
+const SB={url:"https://rudgkogjdpwqwujgyqhw.supabase.co",key:"sb_publishable_dai-Mt0Gx23QOpJ1SCjCPg_Z4bO2vxf",code:null,
+  async rpc(fn,body){ const r=await fetch(this.url+"/rest/v1/rpc/"+fn,{method:"POST",headers:{apikey:this.key,"Content-Type":"application/json"},body:JSON.stringify(body)}); if(!r.ok) throw new Error(fn+" "+r.status); const t=await r.text(); return t?JSON.parse(t):null; }};
+(function(){
+  if(window.claude) return;
+  let code=null; const m=location.hash.match(/trip=([A-Za-z0-9]{12,64})/);
+  if(m){ code=m[1]; try{ localStorage.setItem("ky_trip",code); }catch(e){} }
+  else { try{ code=localStorage.getItem("ky_trip"); }catch(e){} }
+  window.showJoin=function(){
+    if(document.getElementById("join")) return;
+    const d=document.createElement("div"); d.id="join";
+    d.innerHTML=`<form><h2>Join the shared trip</h2><p>Enter the trip code (or paste the trip link) once on this device. After that, everything you change saves for everyone on the trip.</p><label for="joincode" class="muted small">Trip code</label><input id="joincode" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Trip code or link"><div class="err" id="joinerr"></div><div class="row"><button type="button" class="btn ghost" id="joinskip">Just look around</button><button class="btn" type="submit">Join</button></div></form>`;
+    document.body.appendChild(d); const inp=d.querySelector("#joincode"); inp.focus();
+    d.querySelector("#joinskip").onclick=()=>{ d.remove(); renderWho(); };
+    d.querySelector("form").onsubmit=async e=>{ e.preventDefault();
+      const raw=inp.value.trim(); const mm=raw.match(/trip=([A-Za-z0-9]{12,64})/)||raw.match(/^([A-Za-z0-9]{12,64})$/);
+      const err=d.querySelector("#joinerr"); if(!mm){ err.textContent="That doesn't look like a trip code."; return; }
+      err.textContent="Checking…";
+      try{ const items=await SB.rpc("get_trip_items",{p_code:mm[1]}); if(!Array.isArray(items)||!items.length){ err.textContent="That code doesn't match a trip. Check it and try again."; return; }
+        try{ localStorage.setItem("ky_trip",mm[1]); }catch(x){}
+        d.remove(); startShared(mm[1]); flash("Joined — your changes now save for everyone.");
+      }catch(x){ err.textContent="Couldn't reach the trip. Check your connection and try again."; }
+    };
+  };
+  if(!code){ renderWho(); setTimeout(()=>window.showJoin(),400); return; }
+  startShared(code);
+  function startShared(code){
+  SB.code=code; SL.mode="sb"; renderWho();
+  const sig=a=>JSON.stringify(a.map(x=>({...x,img:(x.img||"").length})).sort((p,q)=>p.id<q.id?-1:1));
+  async function pull(first){
+    try{
+      const items=await SB.rpc("get_trip_items",{p_code:code});
+      if(!Array.isArray(items)) throw new Error("bad");
+      if(first&&!items.length){ SL.mode="local"; SB.code=null; try{ localStorage.removeItem("ky_trip"); }catch(x){} renderWho(); flash("That trip code doesn't match a saved trip."); window.showJoin(); return; }
+      SL.mode="sb"; SB.lastSync=Date.now(); renderWho();
+      const pending=SL.items.filter(x=>slWrites[x.id]&&!items.some(y=>y.id===x.id));
+      const next=items.map(x=>{ const local=SL.items.find(y=>y.id===x.id); return local&&slWrites[x.id]?local:x; }).concat(pending);
+      if(!first&&sig(next)===sig(SL.items)) return;
+      if(!first&&document.activeElement&&document.activeElement.closest&&document.activeElement.closest("#detail input,#detail select,#detail textarea")) return;
+      SL.items=next; updateCounts(); renderWho();
+      if(isListView()) renderList(); else if(state.view==="plan") renderDetail();
+    }catch(e){ if(first){ flash("Couldn't reach the shared trip — showing a saved copy."); renderWho(); } }
+  }
+  window.syncNow=async()=>{ await pull(false); flash("Up to date."); };
+  pull(true);
+  setInterval(()=>{ if(!document.hidden) pull(false); },15000);
+  document.addEventListener("visibilitychange",()=>{ if(!document.hidden) pull(false); });
+  window.addEventListener("focus",()=>pull(false));
+  }
+})();
 renderWho();
 (async()=>{
   try{
