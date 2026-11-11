@@ -993,6 +993,14 @@ table.bk .sub{font-size:11.5px;color:var(--muted);margin-top:2px}
 table.bk input.cell,table.bk select.cell{border-color:#ddd;font-size:12.5px;padding:4px 6px}
 table.bk tr.late .due{border-color:#111;font-weight:600}
 .bkflag{font-size:11px;font-weight:600;margin-top:3px}
+.docs{display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.doc{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;max-width:200px}
+.doc a{color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc .dx{border:0;background:none;color:#999;padding:0 2px;font-size:12px;cursor:pointer}
+.doc .dx:hover{color:#111}
+.addpdf{font-size:12px;font-weight:500;border:1px dashed #111;border-radius:999px;padding:2px 9px;cursor:pointer;white-space:nowrap}
+.addpdf:hover{background:#f5f5f5}
+.addpdf.busy{opacity:.5;pointer-events:none}
 details.more{margin-top:24px}
 details.more summary{cursor:pointer;font-size:13px;font-weight:600;border-bottom:1px solid #111;padding-bottom:6px;list-style:none}
 details.more summary::-webkit-details-marker{display:none}
@@ -1747,7 +1755,7 @@ function starBtn(id){const on=slHas(id);return `<button class="star ${on?"on":""
 function newId(){return "c"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function blank(kind,group){return {id:newId(),ref:null,name:"",kind,group,link:"",note:"",booked:false,status:"considering",owner:null,due:"",conf:"",cost:null,cur:"¥",img:"",added:Date.now(),by:ME.id||null};}
 // ---- shared trip: who's here, booking status ----
-let ME={id:null}, USER=null;
+let ME={id:null}, USER=null, ASSETS=null;
 const STATUSES=[["considering","Not booked"],["booked","Booked"],["paid","Paid"]];
 function statusOf(x){ const s=x.status||(x.booked?"booked":"considering"); return s==="chosen"?"considering":s; }
 function isBooked(x){ const s=statusOf(x); return s==="booked"||s==="paid"; }
@@ -1934,8 +1942,15 @@ function bookRow(x){
     <td><div class="nm">${esc(x.name||"Untitled")}</div><div class="sub">${KIND_ONE[x.kind]} · ${esc(g.n)} · ${g.dates}${x.link?` · <a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(siteName(x.link))} ↗</a>`:""}</div></td>
     <td data-l="Status">${statusSel(x)}</td>
     <td data-l="Confirmation #"><input class="cell" data-f="conf" data-id="${esc(x.id)}" value="${esc(x.conf||"")}" placeholder="Add #" maxlength="60"></td>
+    <td data-l="Booking PDF">${docsCell(x)}</td>
     <td data-l="Cost">${cost}</td>
   </tr>`;
+}
+function docsCell(x){
+  const docs=(x.docs||[]).filter(d=>d&&/^[0-9a-f]{32}$/.test(d.id));
+  const links=docs.map(d=>`<span class="doc">📄 <a href="/_blob/${d.id}" target="_blank" rel="noopener" title="${esc(d.name||"Booking PDF")}">${esc(d.name||"Booking PDF")}</a>${ASSETS?`<button class="dx" data-docx="${esc(x.id)}" data-doc="${d.id}" title="Remove">✕</button>`:""}</span>`).join("");
+  const add=ASSETS&&!SL.readOnly?`<label class="addpdf">+ PDF<input type="file" accept="application/pdf,.pdf,image/png,image/jpeg" data-pdf="${esc(x.id)}" hidden></label>`:"";
+  return `<div class="docs">${links}${add}${!links&&!add?`<span class="muted">—</span>`:""}</div>`;
 }
 function renderBook(){
   const order=(a,b)=>GROUPS.findIndex(g=>g.k===a.group)-GROUPS.findIndex(g=>g.k===b.group)||["hotel","food","todo"].indexOf(a.kind)-["hotel","food","todo"].indexOf(b.kind)||(a.added||0)-(b.added||0);
@@ -1943,10 +1958,36 @@ function renderBook(){
   let html=`<div class="listhead"><div><div class="kicker">Record</div><h2>Bookings</h2></div>
     <div class="sumbox"><div><span>${done.length}</span>booked</div><div><span>${done.filter(x=>statusOf(x)==="paid").length}</span>paid</div><div><span>${totals(done.filter(x=>x.kind==="hotel"),"hotel")}</span>hotels total</div></div></div>
     ${SL.readOnly?`<div class="ro">You can view this trip but not change it.</div>`:""}
-    <div class="hint muted">Everything you've booked, in trip order. To add one, set its status to <b>Booked</b> in Hotels, Restaurants or Things to do.</div>
-    <section class="tgroup">${done.length?`<table class="bk"><thead><tr><th>Booking</th><th>Status</th><th>Confirmation #</th><th>Cost</th></tr></thead><tbody>${done.map(bookRow).join("")}</tbody></table>`:`<div class="empty muted">Nothing booked yet.</div>`}</section>`;
+    <div class="hint muted">Everything you've booked, in trip order. To add one, set its status to <b>Booked</b> in Hotels, Restaurants or Things to do.${ASSETS?" Attach the confirmation PDF so everyone can open it.":(SL.mode==="db"?"":" Booking PDFs are kept on the shared claude.ai version only.")}</div>
+    <section class="tgroup">${done.length?`<table class="bk"><thead><tr><th>Booking</th><th>Status</th><th>Confirmation #</th><th>Booking PDF</th><th>Cost</th></tr></thead><tbody>${done.map(bookRow).join("")}</tbody></table>`:`<div class="empty muted">Nothing booked yet.</div>`}</section>`;
   $("#detail").innerHTML=html; fillNames();
 }
+
+document.addEventListener("change",async e=>{
+  const inp=e.target.closest&&e.target.closest("input[data-pdf]"); if(!inp||!inp.files[0]) return;
+  const it=SL.items.find(i=>i.id===inp.dataset.pdf); const f=inp.files[0]; if(!it||!ASSETS) return;
+  const type=f.type||(/\.pdf$/i.test(f.name)?"application/pdf":"");
+  if(!/^(application\/pdf|image\/(png|jpeg))$/.test(type)){ flash("Choose a PDF (or a PNG/JPG screenshot)."); return; }
+  if(f.size>20*1024*1024){ flash("That file is over 20 MB — try a smaller PDF."); return; }
+  const lab=inp.closest(".addpdf"); if(lab) lab.classList.add("busy"); flash("Uploading…");
+  try{
+    const r=await ASSETS.upload(f,{type});
+    it.docs=(it.docs||[]).concat([{id:r.id,name:f.name.slice(0,80),size:r.sizeBytes}]);
+    saveItem(it,["docs"]); flash("PDF attached."); renderList();
+  }catch(err){
+    const c=err&&err.code;
+    flash(c==="too_large"?"That file is over 20 MB — try a smaller PDF.":c==="unsupported_type"?"That file type isn't supported — use a PDF.":c==="quota_or_state"?"Storage is full — remove an old PDF first.":c==="rate_limited"?"Too many uploads at once — try again in a moment.":"Couldn't upload that file. Try again.");
+    if(lab) lab.classList.remove("busy");
+  }
+});
+document.addEventListener("click",async e=>{
+  const b=e.target.closest&&e.target.closest("[data-docx]"); if(!b) return;
+  const it=SL.items.find(i=>i.id===b.dataset.docx); if(!it) return;
+  if(!b.classList.contains("confirm")){ b.classList.add("confirm"); b.textContent="Remove?"; setTimeout(()=>{ b.classList.remove("confirm"); b.textContent="✕"; },2500); return; }
+  const id=b.dataset.doc;
+  it.docs=(it.docs||[]).filter(d=>d.id!==id); saveItem(it,["docs"]); renderList();
+  if(ASSETS){ try{ await ASSETS.delete(id); }catch(err){ /* someone else's upload: unlinked from the booking, file kept */ } }
+});
 
 // ---- Things to do ----
 function isHidden(id){ return typeof SL!=="undefined"&&SL.items.some(x=>x.kind==="hide"&&x.ref===id); }
@@ -2100,6 +2141,7 @@ renderWho();
     const [db,user]=await Promise.all([claude.use("db"),claude.use("user")]);
     if(!db) return;
     USER=user||null; ME=user?await user.me():{id:null};
+    ASSETS=await claude.use("assets").catch(()=>null);
     if(user){ const w=await user.can("data.write"); if(w===false) SL.readOnly=true; }
     // everyone plans in the same place
     slCol=db.doc("trip/kyushu").collection("places");
