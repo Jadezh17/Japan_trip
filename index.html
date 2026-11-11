@@ -1748,8 +1748,8 @@ function newId(){return "c"+Date.now().toString(36)+Math.random().toString(36).s
 function blank(kind,group){return {id:newId(),ref:null,name:"",kind,group,link:"",note:"",booked:false,status:"considering",owner:null,due:"",conf:"",cost:null,cur:"¥",img:"",added:Date.now(),by:ME.id||null};}
 // ---- shared trip: who's here, booking status ----
 let ME={id:null}, USER=null;
-const STATUSES=[["considering","Considering"],["chosen","Chosen · to book"],["booked","Booked"],["paid","Paid"]];
-function statusOf(x){ return x.status||(x.booked?"booked":"considering"); }
+const STATUSES=[["considering","Not booked"],["booked","Booked"],["paid","Paid"]];
+function statusOf(x){ const s=x.status||(x.booked?"booked":"considering"); return s==="chosen"?"considering":s; }
 function isBooked(x){ const s=statusOf(x); return s==="booked"||s==="paid"; }
 function setStatus(it,s){ it.status=s; it.booked=(s==="booked"||s==="paid"); }
 function statusSel(x){ const s=statusOf(x); return `<select class="st s-${s}" data-f="status" data-id="${esc(x.id)}" title="Booking status">${STATUSES.map(([k,l])=>`<option value="${k}" ${s===k?"selected":""}>${l}</option>`).join("")}</select>`; }
@@ -1854,7 +1854,7 @@ function afterSlChange(){
 }
 function isListView(){return state.view==="food"||state.view==="hotel"||state.view==="todo"||state.view==="book";}
 function updateCounts(){ ["food","hotel","todo"].forEach(k=>{const c=$("#cnt-"+k); if(c){const n=SL.items.filter(x=>x.kind===k).length; c.textContent=n||"";}});
-  const b=$("#cnt-book"); if(b){ const n=bookTodo().length+GROUPS.filter(g=>!stayFor(g).booked).length; b.textContent=n||""; } }
+  const b=$("#cnt-book"); if(b){ const n=bookItems().filter(isBooked).length; b.textContent=n||""; } }
 
 // ---- money ----
 function fmtMoney(n,cur){ if(n==null||isNaN(n)) return "—"; return cur+(cur==="¥"?Math.round(n).toLocaleString("en-AU"):n.toLocaleString("en-AU",{maximumFractionDigits:0})); }
@@ -1916,7 +1916,7 @@ function drawShortlistMap(keepView){
   if(state.view==="todo") return drawTodoMap(keepView);
   layer.clearLayers(); for(const k in markers) delete markers[k];
   const pts=[]; const kind=state.view;
-  SL.items.filter(x=>kind==="book"?["hotel","food","todo"].includes(x.kind)&&statusOf(x)!=="considering":x.kind===kind).forEach(x=>{ if(x.ref&&P[x.ref]){ const p=P[x.ref]; pts.push(p.ll);
+  SL.items.filter(x=>kind==="book"?["hotel","food","todo"].includes(x.kind)&&isBooked(x):x.kind===kind).forEach(x=>{ if(x.ref&&P[x.ref]){ const p=P[x.ref]; pts.push(p.ll);
     markers[x.ref]=L.marker(p.ll,{icon:dotIcon(p.t)}).bindPopup(popupHtml(p),{maxWidth:280,minWidth:260,autoPanPaddingTopLeft:[20,70]}).addTo(layer); }});
   BASES.forEach(b=>L.circleMarker(b.ll,{radius:6,color:"#fff",weight:2,fillColor:"#1f2a37",fillOpacity:1}).addTo(layer).bindTooltip(b.n,{permanent:true,direction:"right",offset:[8,0],className:"baselabel"}));
   if(keepView) return;
@@ -1927,52 +1927,24 @@ function drawShortlistMap(keepView){
 // ---- Bookings ----
 const KIND_ONE={hotel:"Hotel",food:"Restaurant",todo:"Activity"};
 function bookItems(){ return SL.items.filter(x=>["hotel","food","todo"].includes(x.kind)); }
-function bookTodo(){ return bookItems().filter(x=>statusOf(x)==="chosen"); }
-function stayFor(g){ const hs=SL.items.filter(x=>x.kind==="hotel"&&x.group===g.k); return {hs,booked:hs.find(isBooked),chosen:hs.find(x=>statusOf(x)==="chosen")}; }
-const todayIso=()=>{ const d=new Date(); return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); };
 function bookRow(x){
-  const g=GROUPS.find(g=>g.k===x.group)||GROUPS[0]; const s=statusOf(x);
-  const late=s==="chosen"&&x.due&&x.due<todayIso();
+  const g=GROUPS.find(g=>g.k===x.group)||GROUPS[0];
   const cost=x.cost!=null&&x.cost!==""?(x.kind==="hotel"?`${fmtMoney(x.cost*g.nights,x.cur)}<div class="sub">${fmtMoney(x.cost,x.cur)} × ${g.nights} night${g.nights>1?"s":""}</div>`:`${fmtMoney(x.cost,x.cur)}<div class="sub">per person</div>`):`<span class="muted">—</span>`;
-  const ppl=peopleIds();
-  return `<tr data-row="${esc(x.id)}" class="${late?"late":""}">
-    <td><div class="nm">${esc(x.name||"Untitled")}</div><div class="sub">${KIND_ONE[x.kind]} · ${esc(g.n)} · ${g.dates}${x.link?` · <a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(siteName(x.link))} ↗</a>`:""}</div>${late?`<div class="bkflag">Book-by date has passed</div>`:""}</td>
+  return `<tr data-row="${esc(x.id)}">
+    <td><div class="nm">${esc(x.name||"Untitled")}</div><div class="sub">${KIND_ONE[x.kind]} · ${esc(g.n)} · ${g.dates}${x.link?` · <a href="${esc(x.link)}" target="_blank" rel="noopener">${esc(siteName(x.link))} ↗</a>`:""}</div></td>
     <td data-l="Status">${statusSel(x)}</td>
-    ${USER?`<td data-l="Who's booking"><select class="cell" data-f="owner" data-id="${esc(x.id)}"><option value="">Nobody yet</option>${ppl.map(id=>`<option value="${esc(id)}" ${x.owner===id?"selected":""} data-uid="${esc(id)}">…</option>`).join("")}</select></td>`:""}
-    <td data-l="Book by"><input class="cell due" type="date" data-f="due" data-id="${esc(x.id)}" value="${esc(x.due||"")}"></td>
-    <td data-l="Confirmation #"><input class="cell" data-f="conf" data-id="${esc(x.id)}" value="${esc(x.conf||"")}" placeholder="${s==="considering"?"—":"e.g. 4821-XK"}" maxlength="60"></td>
+    <td data-l="Confirmation #"><input class="cell" data-f="conf" data-id="${esc(x.id)}" value="${esc(x.conf||"")}" placeholder="Add #" maxlength="60"></td>
     <td data-l="Cost">${cost}</td>
   </tr>`;
 }
-function bookTable(rows){
-  if(!rows.length) return `<div class="empty muted">Nothing here.</div>`;
-  return `<table class="bk"><thead><tr><th>Place</th><th>Status</th>${USER?"<th>Who's booking</th>":""}<th>Book by</th><th>Confirmation #</th><th>Cost</th></tr></thead><tbody>${rows.map(bookRow).join("")}</tbody></table>`;
-}
 function renderBook(){
-  const all=bookItems();
-  const by=s=>all.filter(x=>statusOf(x)===s);
-  const sortDue=(a,b)=>(a.due||"9999").localeCompare(b.due||"9999")||GROUPS.findIndex(g=>g.k===a.group)-GROUPS.findIndex(g=>g.k===b.group);
-  const sortTrip=(a,b)=>GROUPS.findIndex(g=>g.k===a.group)-GROUPS.findIndex(g=>g.k===b.group)||(a.added||0)-(b.added||0);
-  const stays=GROUPS.map(g=>({g,...stayFor(g)}));
-  const nightsBooked=stays.reduce((n,s)=>n+(s.booked?s.g.nights:0),0), nightsAll=GROUPS.reduce((n,g)=>n+g.nights,0);
-  const done=all.filter(isBooked);
-  const late=by("chosen").filter(x=>x.due&&x.due<todayIso()).length;
-  let html=`<div class="listhead"><div><div class="kicker">Shared trip</div><h2>Bookings</h2></div>
-    <div class="sumbox"><div><span>${nightsBooked}/${nightsAll}</span>nights booked</div><div><span>${by("chosen").length}</span>to book${late?` · ${late} late`:""}</div><div><span>${done.length}</span>booked or paid</div><div><span>${totals(done.filter(x=>x.kind==="hotel"),"hotel")}</span>hotels locked in</div></div></div>
-    ${SL.readOnly?`<div class="ro">You can view this trip but not change it. Ask the owner for Contributor access to help plan.</div>`:""}
-    <div class="hint muted">Move each place through <b>Considering → Chosen → Booked → Paid</b>. Pick who's booking it and a book-by date so nothing slips. ${SL.mode==="db"?"Everyone on this trip sees the same list.":"Saved in this browser only."}</div>
-    <section class="tgroup"><div class="ghead"><h3>Where you're sleeping</h3><span>${GROUPS.length} bases · ${nightsAll} nights</span></div><div class="stays">`;
-  stays.forEach(({g,hs,booked,chosen})=>{
-    const st=booked?`<b>${esc(booked.name)}</b> · ${statusOf(booked)==="paid"?"paid":"booked"}${booked.conf?` · #${esc(booked.conf)}`:""}`
-      :chosen?`<b>${esc(chosen.name)}</b> chosen — not booked yet`
-      :hs.length?`No hotel booked · ${hs.length} option${hs.length>1?"s":""} to compare`:`No hotel shortlisted yet`;
-    html+=`<div class="stay ${booked?"ok":"gap"}"><div><div class="bn">${esc(g.n)}</div><div class="bd">${g.dates} · ${g.nights} night${g.nights>1?"s":""}</div></div><div class="bs">${booked?"✓ ":"⚠ "}${st}</div><button class="lnk" data-view-go="hotel">${booked?"Hotels":"Compare hotels"} ›</button></div>`;
-  });
-  html+=`</div></section>`;
-  html+=`<section class="tgroup"><div class="ghead"><h3>To book</h3><span>Chosen, not booked yet · soonest deadline first</span></div>${bookTable(by("chosen").sort(sortDue))}</section>`;
-  html+=`<section class="tgroup"><div class="ghead"><h3>Booked & paid</h3><span>${done.length} in trip order</span></div>${bookTable(done.sort(sortTrip))}</section>`;
-  const cons=by("considering").sort(sortTrip);
-  html+=`<details class="more"><summary>Still considering · ${cons.length} ›</summary>${bookTable(cons)}</details>`;
+  const order=(a,b)=>GROUPS.findIndex(g=>g.k===a.group)-GROUPS.findIndex(g=>g.k===b.group)||["hotel","food","todo"].indexOf(a.kind)-["hotel","food","todo"].indexOf(b.kind)||(a.added||0)-(b.added||0);
+  const done=bookItems().filter(isBooked).sort(order);
+  let html=`<div class="listhead"><div><div class="kicker">Record</div><h2>Bookings</h2></div>
+    <div class="sumbox"><div><span>${done.length}</span>booked</div><div><span>${done.filter(x=>statusOf(x)==="paid").length}</span>paid</div><div><span>${totals(done.filter(x=>x.kind==="hotel"),"hotel")}</span>hotels total</div></div></div>
+    ${SL.readOnly?`<div class="ro">You can view this trip but not change it.</div>`:""}
+    <div class="hint muted">Everything you've booked, in trip order. To add one, set its status to <b>Booked</b> in Hotels, Restaurants or Things to do.</div>
+    <section class="tgroup">${done.length?`<table class="bk"><thead><tr><th>Booking</th><th>Status</th><th>Confirmation #</th><th>Cost</th></tr></thead><tbody>${done.map(bookRow).join("")}</tbody></table>`:`<div class="empty muted">Nothing booked yet.</div>`}</section>`;
   $("#detail").innerHTML=html; fillNames();
 }
 
